@@ -6,7 +6,7 @@ include "SliceRefinements.dfy"
 
 // Check if both statement are swap equivalent
 method ComputeStatments(s1: string, s2: string) returns (b: bool)  
-//ensures b ==> fib(n)
+//ensures b ==> EquivalentStatments(SeqComp(StringToStatement(s1),StringToStatement(s2)),SeqComp(StringToStatement(s2),StringToStatement(s1)))
 {
 	var S1,S2;
 	var valid1,valid2;
@@ -17,38 +17,77 @@ method ComputeStatments(s1: string, s2: string) returns (b: bool)
 	valid1 := ValidStatement(S1);
 	valid2 := ValidStatement(S2);
 
-	
-	if (valid1 && valid2) 
+	print "test";
+
+	if (!valid1) 
 	{
-		if ( (def(S1) !! def(S2)) && (input(S1) !! def(S2)) && (def(S1) !! input(S2)))
-		{
-			return true;
-		}
-		else 
-		{
-			return false;
-		}
-	}
-	else
-	{
+		print "Invalid Statment 1\n";
 		return false;
 	}
-	/*
-	var S: Statement;
-	if (Valid(S) == true)
-	{}
-
-	if (true)
+	if (!valid2) 
 	{
-
-	return true;
-	} 
-	else 
+		print "Invalid Statment 2\n";
+		return false;
+	}
+	if((def(S1) !! def(S2)) && (input(S1) !! def(S2)) && (def(S1) !! input(S2)))
 	{
+		return true;
+	}
+	
 	return false;
-	}*/
+	
 }
 
+method isValid(S: Statement) returns (b: bool)
+ensures b == ValidStatement(S)
+{
+	return ValidStatement(S);
+}
+
+function method ValidStatement(S: Statement) : bool 
+{
+	// TODO: FIX THIS - Need to change valid from predicate into method/function
+	//if (Valid(S)) then true else false
+	true
+}
+
+// Convert string to Statement
+method StringToStatement(s1: string) returns (s2: Statement)
+//ensures valid ==> Valid(s2)
+{
+
+	if (|s1| == 0 || |s1| == 1 )
+	{
+		return Skip;
+	}
+
+	var commandType := (s1[0],s1[1]);
+
+	/*
+	if (commandType == "SK")
+	{
+		retrun Skip;
+	}
+
+	if (commandType == "AS")
+	{
+		retrun StringToAssignment(s1[3]);
+	}
+	*/
+
+	/*	
+		TODO:
+
+		match s1 {
+		case "" => Skip
+		case ";" => SeqComp(s2, StringToStatement(s1[1]))
+		case "IF" => StringToIf(s1[1])
+		case "WHILE" => StringToDo(s1[1])
+		case "ASM" => StringToAssignment(s1[1])
+
+		}
+	*/
+}
 
 // Convert string to DO Statement
 method StringToDo(s1: string) returns (s2: Statement)
@@ -112,35 +151,3 @@ method StringToRHS(sr: string) returns (RHS: seq<Expression>)
 }
 
 
-method isValid(S: Statement) returns (b: bool)
-ensures b == ValidStatement(S)
-{
-	return ValidStatement(S);
-}
-
-function method ValidStatement(S: Statement) : bool 
-{
-	// TODO: FIX THIS - Need to change valid from predicate into method/function
-	//if (Valid(S)) then true else false
-	true
-}
-
-// Convert string to Statement
-method StringToStatement(s1: string) returns (s2: Statement)
-//ensures valid ==> Valid(s2)
-{
-
-
-	/*	
-		TODO:
-
-		match s1 {
-		case "" => Skip
-		case ";" => SeqComp(s2, StringToStatement(s1[1]))
-		case "IF" => StringToIf(s1[1])
-		case "WHILE" => StringToDo(s1[1])
-		case "ASM" => StringToAssignment(s1[1])
-
-		}
-	*/
-}
