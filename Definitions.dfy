@@ -4,7 +4,7 @@
 
 datatype Statement = Assignment(LHS: seq<Variable>, RHS: seq<Expression>) | Skip | SeqComp(S1: Statement, S2: Statement) | 
 		IF(B0: BooleanExpression, Sthen: Statement, Selse: Statement) | DO(B: BooleanExpression, Sloop: Statement) |
-		LocalDeclaration(L: seq<Variable>, S0: Statement) | Live(L: seq<Variable>, S0: Statement)
+		LocalDeclaration(L: seq<Variable>, S0: Statement) | Live(L: seq<Variable>, S0: Statement) | Assert(B: BooleanExpression)
 type Variable = string
 datatype Value = Int(i: int) | Bool(b: bool)
 type Expression = (State -> Value, set<Variable>)
@@ -30,6 +30,7 @@ predicate Valid(stmt: Statement) reads *
 			(forall state: State :: B.0.requires(state) /*&& B.0(state).Bool?*/) && Valid(Sloop)
 		case LocalDeclaration(L,S0) => Valid(S0)
 		case Live(L, S0) => Valid(S0)
+		case Assert(B) => true
 	} &&
 	// TODO: FixMe
 	//(forall state1: State, P: Predicate  :: (forall v :: v in state1 ==> v in P.1) ==> P.0.requires(state1))
@@ -46,6 +47,7 @@ predicate Core(stmt: Statement)
 		case DO(B,Sloop) => Core(Sloop)
 		case LocalDeclaration(L,S0) => false
 		case Live(L,S0) => false
+		case Assert(B) => false
 	}
 }
 
@@ -75,6 +77,7 @@ function method ToString(S: Statement) : string
 		case DO(B,Sloop) => "while (" + BooleanExpressionToString(B) + ") { " + ToString(Sloop) + " } "
 		case LocalDeclaration(L,S0) => "{ var " + VariableListToString(L) + "; " + ToString(S0) + " } "
 		case Live(L,S0) => "{ var " + VariableListToString(L) + "; " + ToString(S0) + " } "
+		case Assert(B) => "assert " + BooleanExpressionToString(B) + ";"
 	}
 }
 
@@ -111,8 +114,18 @@ function method ExpressionListToString(expressions: seq<Expression>) : string
 }
 
 //============================================================
-//					*** Constractors ***
+//					*** Constructors ***
 //============================================================
+
+function EqualityAssertion(X: seq<Variable>, E: seq<Expression>): (assertion: Statement)
+	requires ValidAssignment(X,E)
+{
+	var B := ((state: State) reads * 
+		requires (forall i :: 0 <= i < |X| ==> X[i] in state && E[i].0.requires(state)) => 
+		forall i :: 0 <= i < |X| ==> state[X[i]] == E[i].0(state), 
+		setOf(X)+varsInExps(E));
+	Assert(B)
+}
 
 function method PredicateFromString(str: string): Predicate
 {
@@ -188,6 +201,13 @@ function wp(stmt: Statement, P: Predicate): Predicate
 					
 		case LocalDeclaration(L,S0) => wp(S0,P)
 		case Live(L,S0) => wp(S0,P)
+		case Assert(B) => var f:= (state: State)
+			reads *
+			requires B.0.requires(state)
+			requires P.0.requires(state)
+			=> /*B.0(state).Bool? && */
+			(B.0(state) && P.0(state));
+			(f,vars(P)+B.1)
 	}
 }
 
@@ -237,6 +257,7 @@ function method def(S: Statement) : set<Variable>
 		case DO(B,Sloop) => def(Sloop)
 		case LocalDeclaration(L,S0) => def(S0) - setOf(L)
 		case Live(L,S0) => def(S0) - setOf(L)
+		case Assert(B) => {}
 	}
 }
 
@@ -250,10 +271,11 @@ function method ddef(S: Statement) : set<Variable>
 		case DO(B,S) => {}
 		case LocalDeclaration(L,S0) => ddef(S0) - setOf(L)
 		case Live(L,S0) => ddef(S0) - setOf(L)
+		case Assert(B) => {}
 	}
 }
 
-function input(S: Statement) : set<Variable>
+function method input(S: Statement) : set<Variable>
 {
 	match S {
 		case Assignment(LHS,RHS) => varsInExps(RHS) 
@@ -263,15 +285,16 @@ function input(S: Statement) : set<Variable>
 		case DO(B,S) => B.1 + input(S) 
 		case LocalDeclaration(L,S0) => input(S0) - setOf(L)
 		case Live(L,S0) => input(S0) - setOf(L)
+		case Assert(B) => B.1
 	}
 }
 
-function trigger<T>(x: T): bool
+function method trigger<T>(x: T): bool
 {
 	true
 }
 
-function glob(S: Statement) : set<Variable>
+function method glob(S: Statement) : set<Variable>
 {
 	set x | trigger(x) && x in def(S) + input(S)
 }
@@ -286,11 +309,12 @@ function allVars(S: Statement): set<Variable>
 		case DO(B,S) => B.1 + allVars(S)
 		case LocalDeclaration(L,S0) => setOf(L)+allVars(S0)
 		case Live(L,S0) => setOf(L)+allVars(S0)
+		case Assert(B) => B.1
 	}
 }
 
-function method setOf(s: seq<Variable>) : set<Variable>
-ensures forall v :: v in setOf(s) ==> v in s
+function method setOf<T>(s: seq<T>) : (res: set<T>)
+ensures forall v :: v in res <==> v in s
 {
 	set x | x in s
 }
@@ -313,12 +337,24 @@ function method varsInExps(exps: seq<Expression>): set<Variable>
 
 function method {:verify true}seqVarToSeqExpr(seqvars: seq<Variable>): (res:seq<Expression>)
 	ensures ValidAssignment(seqvars, res)
+	ensures varsInExps(res) == setOf(seqvars)
 {
 	if seqvars == [] then []
 	else 
 		([((s:State)requires(seqvars[0] in s)=>s[seqvars[0]], {seqvars[0]})] + seqVarToSeqExpr(seqvars[1..]))
 	
 }
+
+function method {:verify false} fSetToSeq(s : set<Variable>) : (res: seq<Variable>)
+ensures |res| == |s|
+ensures forall v :: v in s ==> v in res
+{
+if s == {} then []
+else
+	var v : Variable :| v in s;
+	[v] + fSetToSeq(s - {v})
+	
+} 
 
 predicate EquivalentPredicates(P1: Predicate, P2: Predicate) reads *
 {
@@ -327,6 +363,13 @@ predicate EquivalentPredicates(P1: Predicate, P2: Predicate) reads *
 
 lemma EquivalentPredicatesLemma(P1: Predicate, P2: Predicate)
 ensures EquivalentPredicates(P1,P2) <==> (forall s: State :: P1.0.requires(s) && P2.0.requires(s) ==> P1.0(s) == P2.0(s))
+
+predicate EquivalentBooleanExpressions(B1: BooleanExpression, B2: BooleanExpression) reads *
+{
+	B1.1 == B2.1 &&
+	(forall s :: B1.0.requires(s) <==> B2.0.requires(s)) &&
+	(forall s :: B1.0.requires(s) ==> B1.0(s) == B2.0(s))
+}
 
 predicate EquivalentStatments(S1: Statement, S2: Statement)
 	reads *
@@ -353,6 +396,14 @@ lemma RefinementLemma(S1: Statement, S2: Statement)
 requires Valid(S1)
 requires Valid(S2)
 ensures Refinement(S1, S2) <==> (forall P: Predicate,s: State :: (wp(S1,P).0(s) ==> wp(S2,P).0(s)))
+
+predicate TerminationRefinement(S1: Statement, S2: Statement)
+reads *
+requires Valid(S1)
+requires Valid(S2)
+{
+	forall s: State :: ((wp(S1,ConstantPredicate(true)).0(s) ==> wp(S2,ConstantPredicate(true)).0(s)))
+}
 
 predicate SliceRefinement(S1: Statement, S2: Statement,V: set<Variable>)
 	reads *
@@ -393,6 +444,20 @@ function VarsOfPredicateSet(W: set<Predicate>): set<Variable>
 function PointwisePredicate(s: State, v: Variable) : Predicate
 {
 	(((s1: State) reads*  => v in s1 && v in s && s[v] == s1[v] ,{v}))
+}
+
+predicate PointwiseRefinement(S: Statement, T: Statement, s1: State, v: Variable)
+	reads *
+{
+	Valid(S) && Valid(T) && v in s1 ==>
+		(forall s2 :: (forall x :: x in input(S) || x in input(T) ==> x in s1) && 
+		wp(S,PointwisePredicate(s1,v)).0(s2) ==> wp(T,PointwisePredicate(s1,v)).0(s2))
+}
+
+predicate SetPointwiseRefinement(S: Statement, T: Statement, V: set<Variable>)
+	reads *
+{
+	Valid(S) && Valid(T) && (forall s: State ,v: Variable :: v in V && v in s ==> PointwiseRefinement(S,T,s,v))
 }
 
 function AND(P1: Predicate,P2: Predicate): Predicate
@@ -460,3 +525,46 @@ requires |LHS| == |RHS|
 requires sub(P, LHS, RHS).0.requires(s)
 ensures P.0(s) == sub(P, LHS, RHS).0(s)
  
+lemma Leibniz4(S1: Statement, S2: Statement, S2': Statement)
+requires Valid(S1) && Valid(S2) && Valid(S2')
+requires EquivalentStatments(S2,S2')
+ensures EquivalentStatments(SeqComp(S1,S2),SeqComp(S1,S2'))
+
+predicate mutuallyDisjoint<T>(seqs: seq<seq<T>>)
+{
+	forall i,j :: 0 <= i < j < |seqs| ==> setOf(seqs[i]) !! setOf(seqs[j])
+}
+
+lemma LemmaDisjointUnions<T>(seqs: seq<seq<T>>)
+	requires mutuallyDisjoint(seqs)
+	ensures forall i1,j1,i2,j2 :: 0 <= i1 < j1 < |seqs| && 0 <= i2 < j2 < |seqs| && i1 != i2 && i1 != j2 && j1 != i2 && j1 != j2 ==> 
+		setOf(seqs[i1]+seqs[j1]) !! setOf(seqs[i2]+seqs[j2])
+
+predicate mutuallyDisjoint3<T>(s1: seq<T>, s2: seq<T>, s3: seq<T>)
+{
+	mutuallyDisjoint([s1,s2,s3])// |setOf(s1+s2+s3)| == |s1|+|s2|+|s3|
+}
+
+predicate mutuallyDisjoint4<T>(s1: seq<T>, s2: seq<T>, s3: seq<T>, s4: seq<T>)
+{
+	mutuallyDisjoint([s1,s2,s3,s4])// |setOf(s1+s2+s3+s4)| == |s1|+|s2|+|s3|+|s4|
+}
+
+predicate mutuallyDisjoint5<T>(s1: seq<T>, s2: seq<T>, s3: seq<T>, s4: seq<T>, s5: seq<T>)
+{
+	mutuallyDisjoint([s1,s2,s3,s4,s5])// |setOf(s1+s2+s3+s4+s5)| == |s1|+|s2|+|s3|+|s4|+|s5|
+}
+
+predicate mutuallyDisjoint6<T>(s1: seq<T>, s2: seq<T>, s3: seq<T>, s4: seq<T>, s5: seq<T>, s6: seq<T>)
+{
+	mutuallyDisjoint([s1,s2,s3,s4,s5,s6])// |setOf(s1+s2+s3+s4+s5+s6)| == |s1|+|s2|+|s3|+|s4|+|s5|+|s6|
+}
+
+function corresponding<T(==)>(vr: seq<T>, fvr: seq<T>, vrsubset: set<T>) : (res: seq<T>)
+requires |vr|==|fvr|
+requires vrsubset <= setOf(vr)
+{
+	if vr == [] then [] else
+	if vr[0] in vrsubset then [fvr[0]] + corresponding(vr[1..], fvr[1..], vrsubset-{vr[0]})
+	else corresponding(vr[1..], fvr[1..], vrsubset)
+}

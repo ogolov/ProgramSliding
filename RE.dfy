@@ -105,6 +105,13 @@ ensures vars(wp(S,P)) <= vars(P) - ddef(S) + input(S)
 			(vars(P) - ddef(S) + input(S));
 		} 
 		case Live(L,S0) => assume vars(wp(S,P)) <= vars(P) - ddef(S) + input(S);
+		case Assert(B) => calc {
+			vars(wp(S,P));
+			== // wp of Assertions
+			vars(P)+B.1;
+			== { assert ddef(S) == {}; assert input(S) == B.1; }
+			vars(P) - ddef(S) + input(S);
+		}
 	}
 }
 
@@ -210,7 +217,9 @@ ensures EquivalentPredicates(wp(S,P), AND(P, wp(S,ConstantPredicate(true))))
 		}
 		}
 		
+		// FIXME: complete proof for the following extended constructs...
 		case Live(L, S0) => assume EquivalentPredicates(wp(S,P), AND(P, wp(S,ConstantPredicate(true))));		
+		case Assert(B) => assume EquivalentPredicates(wp(S,P), AND(P, wp(S,ConstantPredicate(true))));		
 	}
 }
 
@@ -222,6 +231,7 @@ lemma RE4(S: Statement)
 //	ensures S.LocalDeclaration? ==> ddef(S) <= def(S)
 
 lemma RE5(S: Statement)
+	ensures glob(S) == def(S) + input(S)
 	//ensures S.LocalDeclaration? ==> vars(SeqComp(L,S)) == def(SeqComp(L,S)) + input(SeqComp(L,S))
 /*{
 	match S{
